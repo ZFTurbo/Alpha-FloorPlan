@@ -37,7 +37,7 @@ R_SCALE = 1.2
 USE_AMP = False
 
 PROCESS_TESTS = None
-# PROCESS_TESTS = [5, 6, 10, 17, 33, 39, 41, 44, 46, 60, 64, 65, 66, 67, 71, 81, 87, 95]
+# PROCESS_TESTS = [98, 100]
 
 # Train part
 # Losses block

@@ -1375,6 +1375,14 @@ def refine_layout(
                     # For the video take the frozen state if the variant is already valid
                     render_state = torch.where((best_key <= 0.0)[:, None, None], best_refined, refined_clamped).detach()
                     curr_render_abs = decode_from_direct_space(render_state, area_i, scale_i)
+                    # The loss sees the hard constraints applied on EVERY step, so the
+                    # video must show the same. Without this the preplaced blocks appear
+                    # to drift through the whole refinement and only snap into place at
+                    # the first post-processing frame.
+                    if is_fixed.any():
+                        curr_render_abs[..., is_fixed, 2:] = target_fp[:n_blocks][is_fixed, 2:]
+                    if is_preplaced.any():
+                        curr_render_abs[..., is_preplaced, :] = target_fp[:n_blocks][is_preplaced]
                     frames.append(curr_render_abs.cpu().numpy().copy())
                 else:
                     frames.append(curr_pred_abs.detach().cpu().numpy().copy())
@@ -2248,27 +2256,45 @@ class FloorplanSolver:
             stage_labels = [None] * len(best_frames)
             changed_masks = [None] * len(best_frames)
 
-            # Each post-processing stage is held on screen for ~1.2 s, otherwise
-            # the handful of stages would flash by in a quarter of a second.
-            hold_frames = max(1, int(video_fps * 1.2))
+            # Post-processing stages are discrete jumps, so they are animated:
+            # tween_frames of eased interpolation from the previous state, then
+            # hold_frames of standing still so the result can be read.
+            tween_frames = max(1, int(video_fps * 0.9))
+            hold_frames = max(1, int(video_fps * 0.7))
             move_eps = 1e-6
 
             prev_stage = best_frames[-1] if best_frames else None
             for stage_label, stage_arr in best_stages:
+                stage_arr = np.asarray(stage_arr, dtype=np.float64)
+
                 if prev_stage is not None and stage_arr.shape == prev_stage.shape:
                     moved = np.abs(stage_arr[:, :2] - prev_stage[:, :2]).max(axis=1) > move_eps
                     resized = np.abs(stage_arr[:, 2:] - prev_stage[:, 2:]).max(axis=1) > move_eps
                     changed = moved | resized
                     n_moved, n_resized = int(moved.sum()), int(resized.sum())
+                    can_tween = bool(changed.any())
                 else:
                     changed = None
                     n_moved = n_resized = 0
+                    can_tween = False
 
                 full_label = "{}  (moved: {}, resized: {})".format(stage_label, n_moved, n_resized)
+
+                if can_tween:
+                    start = np.asarray(prev_stage, dtype=np.float64)
+                    for step_i in range(1, tween_frames + 1):
+                        t = step_i / float(tween_frames)
+                        # smoothstep: starts and ends at zero velocity
+                        e = t * t * (3.0 - 2.0 * t)
+                        best_frames.append(start + (stage_arr - start) * e)
+                        stage_labels.append(full_label)
+                        changed_masks.append(changed)
+
                 for _ in range(hold_frames):
                     best_frames.append(stage_arr)
                     stage_labels.append(full_label)
                     changed_masks.append(changed)
+
                 prev_stage = stage_arr
 
             render_refinement_video(
