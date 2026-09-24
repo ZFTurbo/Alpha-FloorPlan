@@ -18,10 +18,19 @@ def render_refinement_video(
     constraints=None,
     lr=None,
     loss=None,
+    stage_labels=None,
+    changed_masks=None,
 ):
     """
     Renders the layout optimization (refinement) process video.
     Supports visualization of clusters, MIB, and boundary blocks.
+
+    stage_labels: optional list, one entry per frame. A non-empty entry replaces
+        the default "Refinement Step: i / n" title, which is how the
+        post-processing stages (gravity, teleport, reshape) are labelled.
+    changed_masks: optional list, one entry per frame; each entry is a boolean
+        array over blocks. Blocks marked True are outlined in orange for that
+        frame, so a viewer can see exactly what the stage touched.
     """
     num_frames = len(frames)
     if num_frames == 0:
@@ -59,6 +68,7 @@ def render_refinement_video(
     text_patches = []
     boundary_artists = []
     cluster_artists = []
+    base_edgecolors = []  # to restore the outline after a highlighted frame
 
     hatch_patterns = ['///', '\\\\\\', 'xxx', '...', '+++', 'OO', '**', '--', '||']
 
@@ -120,6 +130,7 @@ def render_refinement_video(
                                   hatch=current_hatch, zorder=3)
         ax.add_patch(patch)
         rect_patches.append(patch)
+        base_edgecolors.append(edgecolor)
 
         # Boundaries
         if boundary_code > 0:
@@ -165,6 +176,10 @@ def render_refinement_video(
     def update(frame_idx):
         rects = frames[frame_idx]
 
+        curr_changed = None
+        if changed_masks is not None and frame_idx < len(changed_masks):
+            curr_changed = changed_masks[frame_idx]
+
         # Recalculate cluster centroids
         current_centroids = {}
         if cluster_blocks:
@@ -182,6 +197,14 @@ def render_refinement_video(
             rect_patches[i].set_xy((x, y))
             rect_patches[i].set_width(w)
             rect_patches[i].set_height(h)
+
+            # Highlight the blocks this stage actually touched
+            if curr_changed is not None and i < len(curr_changed) and curr_changed[i]:
+                rect_patches[i].set_edgecolor('darkorange')
+                rect_patches[i].set_linewidth(3)
+            else:
+                rect_patches[i].set_edgecolor(base_edgecolors[i])
+                rect_patches[i].set_linewidth(1)
 
             # Update text
             cx = x + w / 2.0
@@ -210,11 +233,20 @@ def render_refinement_video(
                 for pt_idx, pt in enumerate(pts):
                     lines[pt_idx].set_data([centroid[0], pt[0]], [centroid[1], pt[1]])
 
-        title_str = f"Refinement Step: {frame_idx + 1} / {num_frames}"
-        if lr is not None and frame_idx < len(lr):
-            title_str += f" | LR: {lr[frame_idx]:.6f}"
-        if loss is not None and frame_idx < len(loss):
-            title_str += f" | Loss: {loss[frame_idx]:.6f}"
+        stage = None
+        if stage_labels is not None and frame_idx < len(stage_labels):
+            stage = stage_labels[frame_idx]
+
+        if stage:
+            # Post-processing frame: show the stage name instead of LR/loss,
+            # which are meaningless once the gradient loop is over.
+            title_str = stage
+        else:
+            title_str = f"Refinement Step: {frame_idx + 1} / {num_frames}"
+            if lr is not None and frame_idx < len(lr):
+                title_str += f" | LR: {lr[frame_idx]:.6f}"
+            if loss is not None and frame_idx < len(loss):
+                title_str += f" | Loss: {loss[frame_idx]:.6f}"
         title.set_text(title_str)
 
         # For optimization (blit=True) return the list of all changed objects

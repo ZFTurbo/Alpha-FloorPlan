@@ -1810,8 +1810,18 @@ def postprocess_and_score(
         area_targets,
         metrics,
         orig_constraints=None,
+        collect_stages=False,
 ):
     curr_pred_abs = curr_pred_abs.clone()
+
+    # Snapshots of the layout after each post-processing stage, used by the
+    # refinement video. A stage that did not run leaves no snapshot, so the
+    # video shows only what actually happened on this test case.
+    stages = []
+
+    def snap(label):
+        if collect_stages:
+            stages.append((label, curr_pred_abs.detach().cpu().numpy().copy()))
 
     is_fixed = (curr_constraints[:, 0] == 1)
     is_preplaced = (curr_constraints[:, 1] == 1)
@@ -1821,15 +1831,19 @@ def postprocess_and_score(
     if is_preplaced.any():
         curr_pred_abs[is_preplaced] = target_fp[is_preplaced]
 
+    snap("After refine (hard constraints applied)")
+
     _tp = time.perf_counter()
 
     violations, _ = check_overlap_vectorized(curr_pred_abs)
     if violations > 0:
         curr_pred_abs, _, _ = push_out_legalize(curr_pred_abs, curr_constraints)
         violations, _ = check_overlap_vectorized(curr_pred_abs)
+        snap("Push-out legalize")
 
     if violations > 0:
         curr_pred_abs, _ = teleport_violators_smart(curr_pred_abs, curr_constraints)
+        snap("Teleport violators")
 
     _prev_grav = None
     for _ in range(3):
@@ -1838,18 +1852,23 @@ def postprocess_and_score(
             if _prev_grav is not None and torch.equal(curr_pred_abs, _prev_grav):
                 break  # converged -> further passes would give the same result
             _prev_grav = curr_pred_abs.clone()
+    snap("Boundary-aware gravity")
 
     has_clusters = bool((curr_constraints[:, 3] > 0).any())
     if has_clusters:
         curr_pred_abs, _ = fix_grouping_violations_greedily(curr_pred_abs, curr_constraints, gap=0.0)
+        snap("Cluster grouping fix")
         curr_pred_abs, _ = reshape_cluster_blocks_to_touch(curr_pred_abs, curr_constraints)
+        snap("Cluster reshape")
 
     violations_final, _ = check_overlap_vectorized(curr_pred_abs)
     if violations_final > 0:
         curr_pred_abs, _, _ = push_out_legalize(curr_pred_abs, curr_constraints)
         violations_final, _ = check_overlap_vectorized(curr_pred_abs)
+        snap("Final push-out")
         if violations_final > 0:
             curr_pred_abs, _ = teleport_violators_smart(curr_pred_abs, curr_constraints)
+            snap("Final teleport")
 
     PHASE_TIMES['pp_legalize'] += time.perf_counter() - _tp; _tp = time.perf_counter()
 
@@ -1894,7 +1913,7 @@ def postprocess_and_score(
     final_violations, _ = check_overlap_vectorized(curr_pred_abs)
     key = final_violations * 1e6 + solution_metrics.cost
 
-    return idx, key, curr_pred_abs
+    return idx, key, curr_pred_abs, stages
 
 
 class FloorplanSolver:
@@ -2176,14 +2195,15 @@ class FloorplanSolver:
             futures.append(self.executor.submit(
                 postprocess_and_score, k, all_pred_abs[k], curr_constraints,
                 target_fp[0], b2b_connectivity, p2b_connectivity, pins_pos,
-                area_targets, metrics, constraints))
+                area_targets, metrics, constraints,
+                DRAW_VALIDATION_VIDEOS))
 
         for f in concurrent.futures.as_completed(futures):
             results.append(f.result())
 
         # Sort and pick the objectively best variant after all the mutations
         results.sort(key=lambda x: x[1])
-        best_idx, best_key, curr_pred_abs = results[0]
+        best_idx, best_key, curr_pred_abs, best_stages = results[0]
 
         # --- Extract the score and the overlaps from the key ---
         best_overlaps = int(best_key // 1e6)
@@ -2218,20 +2238,51 @@ class FloorplanSolver:
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
 
+            video_fps = 30
+
             # Extract the position and loss history for EXACTLY the winning variant (best_idx)
             best_frames = [f[best_idx] for f in frames]
             best_loss_vals = [float(l[best_idx]) for l in loss_vals]
 
+            # The gradient part of the video carries no stage label and no highlight
+            stage_labels = [None] * len(best_frames)
+            changed_masks = [None] * len(best_frames)
+
+            # Each post-processing stage is held on screen for ~1.2 s, otherwise
+            # the handful of stages would flash by in a quarter of a second.
+            hold_frames = max(1, int(video_fps * 1.2))
+            move_eps = 1e-6
+
+            prev_stage = best_frames[-1] if best_frames else None
+            for stage_label, stage_arr in best_stages:
+                if prev_stage is not None and stage_arr.shape == prev_stage.shape:
+                    moved = np.abs(stage_arr[:, :2] - prev_stage[:, :2]).max(axis=1) > move_eps
+                    resized = np.abs(stage_arr[:, 2:] - prev_stage[:, 2:]).max(axis=1) > move_eps
+                    changed = moved | resized
+                    n_moved, n_resized = int(moved.sum()), int(resized.sum())
+                else:
+                    changed = None
+                    n_moved = n_resized = 0
+
+                full_label = "{}  (moved: {}, resized: {})".format(stage_label, n_moved, n_resized)
+                for _ in range(hold_frames):
+                    best_frames.append(stage_arr)
+                    stage_labels.append(full_label)
+                    changed_masks.append(changed)
+                prev_stage = stage_arr
+
             render_refinement_video(
                 best_frames,
                 video_path=output_dir + "/video_{}.mp4".format(block_count),
-                fps=30,
+                fps=video_fps,
                 preplaced_mask=is_preplaced.detach().cpu().numpy(),
                 fixed_size_mask=is_fixed.detach().cpu().numpy(),
                 pins=raw_gpu['pins_pos'].detach().cpu().numpy(),
                 constraints=curr_constraints.detach().cpu().numpy(),
                 lr=lrs,
                 loss=best_loss_vals,
+                stage_labels=stage_labels,
+                changed_masks=changed_masks,
             )
 
         # 7. Converting the result to List[Tuple[float, float, float, float]]
