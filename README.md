@@ -1,6 +1,6 @@
-# ICCAD Contest 2026: The FloorSet Challenge
+# Alpha FloorPlan
 
-Solution for Problem C of ICCAD Contest 2026.
+Solution for Problem C of ICCAD Contest 2026: The FloorSet Challenge.
 
 ## Problem description
 
