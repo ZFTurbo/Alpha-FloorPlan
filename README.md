@@ -4,29 +4,29 @@ Solution for Problem C of ICCAD Contest 2026: The FloorSet Challenge.
 
 ## Problem description
 
-Fixed-outline SoC floorplanning: arrange `k` rectangular blocks (21–120 per test case)
+Fixed-outline SoC floorplanning: arrange $k$ rectangular blocks (21–120 per test case)
 on a 2D canvas so that wirelength and bounding-box area are minimized while all
-placement constraints hold. The origin `(0, 0)` is the lower-left corner of the canvas.
+placement constraints hold. The origin $(0, 0)$ is the lower-left corner of the canvas.
 
 **Input**
 
-* Area target `a_i` for each block — blocks are soft, their aspect ratio is free.
-* `r` terminals (pins) at fixed coordinates on the canvas, used for external interfacing.
-* Weighted block-to-block connectivity `W_int` and block-to-terminal connectivity `W_ext`.
+* Area target $a_i$ for each block — blocks are soft, their aspect ratio is free.
+* $r$ terminals (pins) at fixed coordinates on the canvas, used for external interfacing.
+* Weighted block-to-block connectivity $W_{int}$ and block-to-terminal connectivity $W_{ext}$.
 * Per-block placement constraints (fixed shape, preplaced, MIB group, cluster, boundary).
 
-**Output** — for every block, the lower-left corner `(x_i, y_i)` and the dimensions `(w_i, h_i)`,
-so that block `b_i` occupies the region `[x_i, x_i + w_i] x [y_i, y_i + h_i]`.
+**Output** — for every block, the lower-left corner $(x_i, y_i)$ and the dimensions $(w_i, h_i)$,
+so that block $b_i$ occupies the region $[x_i, x_i + w_i] \times [y_i, y_i + h_i]$.
 
 ### Hard constraints
 
-Violating any of them makes the solution infeasible and costs a flat `M = 10`
+Violating any of them makes the solution infeasible and costs a flat $M = 10$
 for that test case:
 
-* soft-block area within 1% of target: `|w*h - a| / a <= 0.01`;
+* soft-block area within 1% of target: $\frac{|w \cdot h - a|}{a} \le 0.01$;
 * strictly overlap-free placement (touching edges are allowed);
-* fixed-shape blocks keep their input `(w, h)` exactly;
-* preplaced blocks keep their input `(x, y, w, h)` exactly.
+* fixed-shape blocks keep their input $(w, h)$ exactly;
+* preplaced blocks keep their input $(x, y, w, h)$ exactly.
 
 ### Soft constraints
 
@@ -39,35 +39,44 @@ Penalized but not disqualifying:
 Violations are counted per block (boundary) or per group (grouping: connected
 components − 1, MIB: distinct shapes − 1) and normalized:
 
-    Violations_rel = (V_grouping + V_boundary + V_mib) / N_soft
+$$
+\text{Violations}_{rel} = \frac{V_{grouping} + V_{boundary} + V_{mib}}{N_{soft}}
+$$
 
-    N_soft = |B_boundary| + sum_p (|G_p| - 1) + sum_q (|M_q| - 1)
+$$
+N_{soft} = |B_{boundary}| + \sum_p (|G_p| - 1) + \sum_q (|M_q| - 1)
+$$
 
-so that `Violations_rel` lies in `[0, 1]`.
+so that $\text{Violations}_{rel}$ lies in $[0, 1]$.
 
 ### Cost per test case
 
-    Cost = min( (1 + a * (HPWL_gap + Area_gap)) * exp(b * Violations_rel) * max(0.7, R^g),
-                M - 1e-6 )
+$$
+\text{Cost} = \min\left( \big(1 + a \cdot (\text{HPWL}_{gap} + \text{Area}_{gap})\big) \cdot e^{b \cdot \text{Violations}_{rel}} \cdot \max(0.7, R^g), M - 10^{-6} \right)
+$$
 
-    Cost = M = 10     if the solution is infeasible
+$$
+\text{Cost} = M = 10 \quad \text{if the solution is infeasible}
+$$
 
-with `a = 0.5`, `b = 2.0`, `g = 0.3`.
+with $a = 0.5$, $b = 2.0$, $g = 0.3$.
 
-* `HPWL_gap` — relative gap of the achieved half-perimeter wirelength against the
+* $\text{HPWL}_{gap}$ — relative gap of the achieved half-perimeter wirelength against the
   optimal baseline shipped with the dataset.
-* `Area_gap` — relative gap of the achieved bounding-box area against the baseline.
-* `R` — your runtime divided by the median runtime of all submissions for that test
+* $\text{Area}_{gap}$ — relative gap of the achieved bounding-box area against the baseline.
+* $R$ — your runtime divided by the median runtime of all submissions for that test
   case. Speed-up is capped at −30%, slowness is uncapped.
 
-HPWL sums weighted Manhattan distances between block centroids (`c_x = x + w/2`,
-`c_y = y + h/2`) and between block centroids and terminals.
+HPWL sums weighted Manhattan distances between block centroids ($c_x = x + w/2$,
+$c_y = y + h/2$) and between block centroids and terminals.
 
 ### Total score
 
 Weighted average over 100 hidden test cases, one per block count from 21 to 120:
 
-    Total Score = sum_i Cost[i] * exp(n_i / 12) / sum_j exp(n_j / 12)
+$$
+\text{Total Score} = \frac{\sum_i \text{Cost}[i] \cdot e^{n_i / 12}}{\sum_j e^{n_j / 12}}
+$$
 
 Large instances dominate the score. Lower is better; a solution matching the baseline
 everywhere at median runtime scores about 1.0.
@@ -95,21 +104,25 @@ No search over discrete representations (B*-tree, sequence pair) is used at any 
 
 Each block is described by three numbers instead of four:
 
-    x = x_norm * scale          x_norm in (0, 1)   via sigmoid
-    y = y_norm * scale          y_norm in (0, 1)   via sigmoid
-    w = sqrt(area) * exp(r/2)   r = r_norm * R_SCALE, r_norm in (-1, 1) via tanh
-    h = sqrt(area) * exp(-r/2)
+$$
+\begin{aligned}
+x &= x_{norm} \cdot \text{scale} \quad && (x_{norm} \in (0, 1) \text{ via sigmoid}) \\
+y &= y_{norm} \cdot \text{scale} \quad && (y_{norm} \in (0, 1) \text{ via sigmoid}) \\
+w &= \sqrt{\text{area}} \cdot e^{r/2} \quad && (r = r_{norm} \cdot \mathrm{R\_SCALE}, \ r_{norm} \in (-1, 1) \text{ via tanh}) \\
+h &= \sqrt{\text{area}} \cdot e^{-r/2}
+\end{aligned}
+$$
 
-Because `w * h = area` identically, the 1% area tolerance — one of the hard constraints —
+Because $w \cdot h = \text{area}$ identically, the 1% area tolerance — one of the hard constraints —
 is satisfied by construction and never has to be optimized for. The network only has to
-choose a position and an aspect ratio. Area targets are additionally scaled by `0.991`
+choose a position and an aspect ratio. Area targets are additionally scaled by 0.991
 before decoding, which leaves a safety margin against rounding in the official checker.
 
 ### 2. Model
 
 A transformer encoder over blocks as tokens:
 
-* **14 input features per block** — normalized `sqrt(area)`, 5 placement constraints,
+* **14 input features per block** — normalized $\sqrt{\text{area}}$, 5 placement constraints,
   3 spectral graph embeddings (Fiedler vectors of the b2b Laplacian), the weighted
   center of mass of the pins the block connects to, and the known aspect ratio /
   coordinates for fixed and preplaced blocks.
@@ -119,14 +132,14 @@ A transformer encoder over blocks as tokens:
 * **Pin anchors** — pin coordinates are projected and added to the block embeddings
   through the p2b incidence matrix.
 * 12 layers, hidden dim 256, 8 heads, pre-norm blocks.
-* MIB groups are enforced architecturally: after the head, `r_norm` inside a group is
+* MIB groups are enforced architecturally: after the head, $r_{norm}$ inside a group is
   replaced by the value of its first hard block, or by the group mean if there is none.
 
 ### 3. Training
 
 Supervised on the optimal-by-construction layouts, with three terms:
 
-* MSE between decoded `(x, y, w, h)` and the ground-truth layout;
+* MSE between decoded $(x, y, w, h)$ and the ground-truth layout;
 * a connectivity-weighted pairwise distance loss — differences between the matrices of
   pairwise centroid distances, weighted by b2b edge weights, which teaches relative
   arrangement rather than absolute coordinates;
@@ -165,7 +178,7 @@ The refined layouts still contain small overlaps, so each candidate goes through
   is still fragmented, analytic reshaping of soft blocks so the islands touch.
 
 Every candidate is then scored with the official cost function, and the best one wins.
-The sorting key is `overlaps * 1e6 + cost`, so a feasible solution always beats an
+The sorting key is $\text{overlaps} \times 10^6 + \text{cost}$, so a feasible solution always beats an
 infeasible one and, among infeasible ones, the least broken is chosen.
 
 ## Data downloading
@@ -233,32 +246,8 @@ Avg Cost: 1.1006
 Full validation time: 560.16 sec
 ```
 
-
-## Data preprocessing for training
-
-1. **[Optional]** Create augmented data - it will increase train dataset 2 times:
-
-```bash
-python preproc_data/r03_create_augmented_train_data.py --source <path to train dataset> --output <path to augmented dataset>
-```
-
-2. Preprocess data for training (calculate additional variables):
-```bash
-python preproc_data/r04_preprocess_data_for_training.py --source <path to train dataset> --target <path to preproc dataset>
-```
-if you have augmented data you must run code for this data too.
-
-## Training
-
-```bash
-python train.py
-```
-
-**Note**: Train parameters are available in `config.py`.
-
 ## Visualization
 
 https://github.com/user-attachments/assets/eda25fcd-2741-46aa-8040-c1ca97974598
 
 <video src="https://github.com/user-attachments/assets/8d048987-bcfe-45b1-81eb-8e16fdba2b22" width="1200" controls></video>
-
