@@ -255,3 +255,10 @@ python train.py
 ```
 
 **Note**: Train parameters are available in `config.py`.
+
+## Visualization
+
+https://github.com/user-attachments/assets/eda25fcd-2741-46aa-8040-c1ca97974598
+
+<video src="https://github.com/user-attachments/assets/8d048987-bcfe-45b1-81eb-8e16fdba2b22" width="1200" controls></video>
+
