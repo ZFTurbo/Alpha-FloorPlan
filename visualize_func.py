@@ -8,6 +8,34 @@ import matplotlib.animation as animation
 matplotlib.use('Agg')
 
 
+def _fit_figure(x0, x1, y0, y1, base=10.0, title_in=0.42, dpi=100):
+    """Figure sized to the data aspect, with the axes filling almost all of it.
+
+    A square figure plus set_aspect('equal') is what produces the wide white
+    bands: matplotlib shrinks the axes box inside the square until the data
+    aspect matches. Sizing the figure to the content instead removes them.
+    Dimensions are rounded to whole even pixels, which ffmpeg requires.
+    """
+    span_x = max(x1 - x0, 1e-9)
+    span_y = max(y1 - y0, 1e-9)
+
+    if span_x >= span_y:
+        w, h = base, max(2.5, base * span_y / span_x)
+    else:
+        w, h = max(2.5, base * span_x / span_y), base
+
+    def even(v):
+        px = int(round(v * dpi))
+        return (px + (px % 2)) / float(dpi)
+
+    w, h = even(w), even(h + title_in)
+    # axes rect: tiny margins, room for the title on top
+    pad = 0.008
+    bottom = pad
+    height = 1.0 - pad - (title_in / h)
+    return (w, h), [pad, bottom, 1.0 - 2 * pad, height], dpi
+
+
 def render_refinement_video(
     frames,
     video_path="refinement.mp4",
@@ -55,13 +83,29 @@ def render_refinement_video(
         max_x = max(max_x, np.max(pins[:, 0]))
         max_y = max(max_y, np.max(pins[:, 1]))
 
-    margin = 0.05
-    fig, ax = plt.subplots(figsize=(10, 10))  # Increased size for readability
-    ax.set_aspect('equal')
-    ax.set_xlim([0, max_x * (1 + margin)])
-    ax.set_ylim([0, max_y * (1 + margin)])
-    ax.set_xlabel("X-axis")
-    ax.set_ylabel("Y-axis")
+    # Use the real extent (not a forced 0 origin) so nothing is padded for free
+    min_x = float(np.min(all_rects[:, 0])) if len(all_rects) > 0 else 0.0
+    min_y = float(np.min(all_rects[:, 1])) if len(all_rects) > 0 else 0.0
+    if pins is not None and len(pins) > 0:
+        min_x = min(min_x, float(np.min(pins[:, 0])))
+        min_y = min(min_y, float(np.min(pins[:, 1])))
+    min_x = min(min_x, 0.0)
+    min_y = min(min_y, 0.0)
+
+    pad = 0.015 * max(max_x - min_x, max_y - min_y, 1e-9)
+    x0, x1 = min_x - pad, max_x + pad
+    y0, y1 = min_y - pad, max_y + pad
+
+    figsize, ax_rect, dpi = _fit_figure(x0, x1, y0, y1)
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+    ax = fig.add_axes(ax_rect)
+    ax.set_aspect('equal', adjustable='box')
+    ax.set_xlim([x0, x1])
+    ax.set_ylim([y0, y1])
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
     # Lists of graphic objects to update in the animation
     rect_patches = []
@@ -298,10 +342,23 @@ def draw_layout(
         max_x = max(max_x, np.max(pins[:, 0]))
         max_y = max(max_y, np.max(pins[:, 1]))
 
-    margin = 0.05
-    # Make the canvas slightly larger for easier reading of multi-line text
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.set_aspect('equal')
+    # Figure follows the layout aspect, so no wide white bands appear
+    min_x_d = float(np.min(rects[:, 0])) if len(rects) > 0 else 0.0
+    min_y_d = float(np.min(rects[:, 1])) if len(rects) > 0 else 0.0
+    if pins is not None and len(pins) > 0:
+        min_x_d = min(min_x_d, float(np.min(pins[:, 0])))
+        min_y_d = min(min_y_d, float(np.min(pins[:, 1])))
+    min_x_d = min(min_x_d, 0.0)
+    min_y_d = min(min_y_d, 0.0)
+
+    pad_d = 0.015 * max(max_x - min_x_d, max_y - min_y_d, 1e-9)
+    dx0, dx1 = min_x_d - pad_d, max_x + pad_d
+    dy0, dy1 = min_y_d - pad_d, max_y + pad_d
+
+    figsize_d, ax_rect_d, dpi_d = _fit_figure(dx0, dx1, dy0, dy1, title_in=0.45)
+    fig = plt.figure(figsize=figsize_d, dpi=dpi_d)
+    ax = fig.add_axes(ax_rect_d)
+    ax.set_aspect('equal', adjustable='box')
 
     # ==========================================================
     # 1. RENDERING CLUSTER CONNECTIONS (Draw under blocks, zorder=1)
@@ -434,13 +491,15 @@ def draw_layout(
                    color='green', s=40, zorder=6,
                    marker='o', label='Pins')
 
-    ax.set_xlim([0, max_x * (1 + margin)])
-    ax.set_ylim([0, max_y * (1 + margin)])
-    ax.set_title(f"Test Case {test_id} Layout{score_info}")
-    ax.set_xlabel("X-axis")
-    ax.set_ylabel("Y-axis")
+    ax.set_xlim([dx0, dx1])
+    ax.set_ylim([dy0, dy1])
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_title(f"Test Case {test_id} Layout{score_info}", fontsize=11)
 
     file_path = os.path.join(output_dir, f"test_{test_id}.png")
-    plt.savefig(file_path, bbox_inches='tight')
+    plt.savefig(file_path, bbox_inches='tight', pad_inches=0.02)
     plt.close(fig)
     plt.close('all')
